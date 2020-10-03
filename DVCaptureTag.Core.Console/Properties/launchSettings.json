@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "DVCaptureTag.Core.Console": {
+      "commandName": "Project",
+      "commandLineArgs": "--folderPath H:\\DVMetaTest\\SCRATCH_1 -w"
+    }
+  }
+}
