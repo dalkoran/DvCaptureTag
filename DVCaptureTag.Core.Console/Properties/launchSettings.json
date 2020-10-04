@@ -2,7 +2,11 @@
   "profiles": {
     "DVCaptureTag.Core.Console": {
       "commandName": "Project",
-      "commandLineArgs": "--folderPath H:\\DVMetaTest\\SCRATCH_1 -w"
+      "commandLineArgs": "--folderPath Z:\\Video\\Raw\\DCR-PC100E\\SCRATCH_2 -w --pattern \"*.avi\" --verbose --logLevel Warning",
+      "remoteDebugEnabled": false
+    },
+    "Docker": {
+      "commandName": "Docker"
     }
   }
 }
