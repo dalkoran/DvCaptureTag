@@ -1,12 +1,14 @@
 ﻿namespace DVCaptureTag.Console
 {
     using System;
+    using System.Collections.Generic;
     using System.IO;
     using System.Linq;
     using System.Text.RegularExpressions;
     using CommandLine;
     using CommandLine.Text;
     using MediaInfo;
+    using TagLib.Riff;
 
     ////using MediaInfo;
 
@@ -59,9 +61,45 @@
             public string TapeName;
             public ulong? TimecodeIn;
             public ulong? TimecodeOut;
-            public uint? TotalFrames;
+            public uint? CapturedFrames;
             public uint? DroppedFrames;
             public double? FrameRatePerSecond;
+
+            public DateTimeOffset? GetRecordedDateUtc(string path)
+            {
+                if (!this.RecordedDate.HasValue)
+                {
+                    return null;
+                }
+
+                // Assume Adelaide time
+                var fileName = Path.GetFileNameWithoutExtension(path);
+                TimeZoneInfo timezone = TimeZoneConverter.TZConvert.GetTimeZoneInfo("Cen. Australia Standard Time");
+                if (this.TapeName.StartsWith("CAN") || fileName.StartsWith("CAN"))
+                {
+                    timezone = TimeZoneConverter.TZConvert.GetTimeZoneInfo("Pacific Standard Time");
+                }
+                else if (this.TapeName.StartsWith("USA") || fileName.StartsWith("USA"))
+                {
+                    timezone = TimeZoneConverter.TZConvert.GetTimeZoneInfo("Eastern Standard Time");
+                }
+                else if (fileName.Contains("Perth"))
+                {
+                    timezone = TimeZoneConverter.TZConvert.GetTimeZoneInfo("W. Australia Standard Time");
+                }
+                else if (this.TapeName.Contains("VIC"))
+                {
+                    timezone = TimeZoneConverter.TZConvert.GetTimeZoneInfo("AUS Eastern Standard Time");
+                }
+                else if (this.TapeName.Contains("DUNK"))
+                {
+                    timezone = TimeZoneConverter.TZConvert.GetTimeZoneInfo("E. Australia Standard Time");
+                }
+
+                var offset = timezone.GetUtcOffset(this.RecordedDate.Value);
+                return new DateTimeOffset(this.RecordedDate.Value, offset);
+            }
+
 
             public string TimecodeString
             {
@@ -86,6 +124,19 @@
                 var time = new TimeSpan(0, 0, (int)(timecode / TimecodeFactor));
 
                 return $"{time.Hours:00}:{time.Minutes:00}:{time.Seconds:00}:{(int)(frame * (frameRatePerSecond ?? DefaultFrameRatePerSecond)) + 1:00}";
+            }
+
+            public string Comments
+            {
+                get
+                {
+                    string[] parts =
+                    {
+                        this.TimecodeString,
+                        this.DroppedFrames > 0 ? $"({this.DroppedFrames} of {this.CapturedFrames + this.DroppedFrames} dropped frames)" : string.Empty,
+                    };
+                    return string.Join(" ", parts.Where(p => !string.IsNullOrWhiteSpace(p)));
+                }
             }
         }
 
@@ -203,16 +254,18 @@
                     }
                 }
                 if (ulong.TryParse(timecodeOutMatch.Groups["TimeCode"]?.Value, out ulong timecodeOut)) output.TimecodeOut = timecodeOut;
-                if (uint.TryParse(captureStatsMatch.Groups["TotalFrames"]?.Value, out uint totalFrames)) output.TotalFrames = totalFrames;
+                if (uint.TryParse(captureStatsMatch.Groups["TotalFrames"]?.Value, out uint totalFrames)) output.CapturedFrames = totalFrames;
                 if (uint.TryParse(captureStatsMatch.Groups["FramesDropped"]?.Value, out uint droppedFrames)) output.DroppedFrames = droppedFrames;
 
                 if (!options.Quiet && options.Verbose)
                 {
-                    Console.WriteLine($"    Recorded Date:   {output.RecordedDate}");
+                    Console.Write($"    Recorded Date:   {output.RecordedDate}");
+                    Console.Write($", {output.GetRecordedDateUtc(path)}");
+                    Console.WriteLine($", {output.GetRecordedDateUtc(path)?.UtcDateTime}");
                     Console.WriteLine($"    Tape Name:       {output.TapeName}");
                     Console.WriteLine($"    Timecode In:     {output.TimecodeIn}");
                     Console.WriteLine($"    Timecode Out:    {output.TimecodeOut}");
-                    Console.WriteLine($"    Total Frames:    {output.TotalFrames}");
+                    Console.WriteLine($"    Total Frames:    {output.CapturedFrames}");
                     Console.WriteLine($"    Frame rate:      {output.FrameRatePerSecond} FPS");
                     Console.WriteLine($"    Dropped Frames:  {output.DroppedFrames}");
                 }
@@ -230,19 +283,20 @@
             if (metadata.RecordedDate.HasValue)
             {
                 var osFile = new FileInfo(path);
-                if (osFile.CreationTime != metadata.RecordedDate)
+                if (osFile.CreationTimeUtc != metadata.GetRecordedDateUtc(path))
                 {
                     if (!options.Quiet)
                     {
                         Console.WriteLine($"  CreationTime updated from {osFile.CreationTime} to match Recorded Date: {metadata.RecordedDate.Value}");
+                        Console.WriteLine($"  CreationTimeUtc updated from {osFile.CreationTimeUtc} to match Recorded Date: {metadata.GetRecordedDateUtc(path).Value}");
                     }
                     if (options.PerformUpdate)
                     {
-                        osFile.CreationTime = metadata.RecordedDate.Value;
+                        ////osFile.CreationTime = metadata.RecordedDate.Value;
+                        osFile.CreationTimeUtc = metadata.GetRecordedDateUtc(path).Value.UtcDateTime;
                         stats.NumberOfFilesSaveWithCreationDateUpdated++;
                     }
                     stats.NumberOfFileCreationDatesChanged++;
-                    osFile.Refresh();
                 }
             }
         }
@@ -262,30 +316,49 @@
                 {
                     if ((tagFile.Tag.Album ?? string.Empty) != (metadata.TapeName ?? string.Empty))
                     {
-                        if (!options.Quiet) Console.WriteLine($"  Album tag updated from '{tagFile.Tag.Album}' to match tape name: '{metadata.TapeName}'");
-                        tagFile.Tag.Album = metadata.TapeName;
-                        stats.NumberOfFileTagsChanged++;
-                        tagsUpdated = true;
+                        if (!options.AllowTagOverrides && !string.IsNullOrWhiteSpace(tagFile.Tag.Album))
+                        {
+                            Console.WriteLine($"  Album tag will not be updated from '{tagFile.Tag.Album}' to '{metadata.TapeName}', use --allowTagOverrides flag to override existing tag values.");
+                        }
+                        else
+                        {
+                            if (!options.Quiet) Console.WriteLine($"  Album tag updated from '{tagFile.Tag.Album}' to match tape name: '{metadata.TapeName}'");
+                            tagFile.Tag.Album = metadata.TapeName;
+                            stats.NumberOfFileTagsChanged++;
+                            tagsUpdated = true;
+                        }
                     }
 
-                    if ((tagFile.Tag.Title ?? string.Empty) != (metadata.TapeName ?? string.Empty) &&
-                        (options.AllowTagOverrides || string.IsNullOrWhiteSpace(tagFile.Tag.Title)))
+                    if ((tagFile.Tag.Title ?? string.Empty) != (metadata.TapeName ?? string.Empty))
                     {
-                        if (!options.Quiet) Console.WriteLine($"  Title tag updated from '{tagFile.Tag.Title}' to match tape name: '{metadata.TapeName}'");
-                        tagFile.Tag.Title = metadata.TapeName;
-                        stats.NumberOfFileTagsChanged++;
-                        tagsUpdated = true;
+                        if (!options.AllowTagOverrides && !string.IsNullOrWhiteSpace(tagFile.Tag.Title))
+                        {
+                            Console.WriteLine($"  Title tag will not be updated from '{tagFile.Tag.Title}' to '{metadata.TapeName}', use --allowTagOverrides flag to override existing tag values.");
+                        }
+                        else
+                        {
+                            if (!options.Quiet) Console.WriteLine($"  Title tag updated from '{tagFile.Tag.Title}' to match tape name: '{metadata.TapeName}'");
+                            tagFile.Tag.Title = metadata.TapeName;
+                            stats.NumberOfFileTagsChanged++;
+                            tagsUpdated = true;
+                        }
                     }
                 }
 
-                if (metadata.TimecodeString != null && 
-                    tagFile.Tag.Comment != metadata.TimecodeString && 
-                    (options.AllowTagOverrides || string.IsNullOrWhiteSpace(tagFile.Tag.Comment)))
+                if (metadata.Comments != null &&
+                    tagFile.Tag.Comment != metadata.Comments)
                 {
-                    if (!options.Quiet) Console.WriteLine($"  Comment tag updated from '{tagFile.Tag.Comment}' to include timecode information: '{metadata.TimecodeString}'");
-                    tagFile.Tag.Comment = metadata.TimecodeString;
-                    stats.NumberOfFileTagsChanged++;
-                    tagsUpdated = true;
+                    if (!options.AllowTagOverrides && !string.IsNullOrWhiteSpace(tagFile.Tag.Comment))
+                    {
+                        Console.WriteLine($"  Comment tag will not be updated from '{tagFile.Tag.Comment}' to '{metadata.Comments}', use --allowTagOverrides flag to override existing tag values.");
+                    }
+                    else
+                    {
+                        if (!options.Quiet) Console.WriteLine($"  Comment tag updated from '{tagFile.Tag.Comment}' to include timecode information: '{metadata.Comments}'");
+                        tagFile.Tag.Comment = metadata.Comments;
+                        stats.NumberOfFileTagsChanged++;
+                        tagsUpdated = true;
+                    }
                 }
 
                 if (tagsUpdated)
