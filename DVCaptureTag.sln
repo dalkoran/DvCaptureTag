@@ -1,11 +1,16 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 16
-VisualStudioVersion = 16.0.30413.136
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.33424.131
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DVCaptureTag.Console", "DVCaptureTag.Console\DVCaptureTag.Console.csproj", "{B47BC52E-3844-402C-87F2-0C4F5D23ABA9}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "DVCaptureTag.Core.Console", "DVCaptureTag.Core.Console\DVCaptureTag.Core.Console.csproj", "{EA47D1B8-35A2-4681-B5E2-C0EF83269E22}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Docs", "Docs", "{3DEABF44-9948-4F4D-9214-B03E3B6100FF}"
+	ProjectSection(SolutionItems) = preProject
+		ReadMe.md = ReadMe.md
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
